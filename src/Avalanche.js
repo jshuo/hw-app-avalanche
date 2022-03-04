@@ -20,7 +20,6 @@ export default class Avalanche {
   MAX_HRP_LENGTH = 24;
 
   INS_VERSION = 0x00;
-  INS_GET_WALLET_ID = 0x01;
   INS_PROMPT_PUBLIC_KEY = 0x02;
   INS_PROMPT_EXT_PUBLIC_KEY = 0x03;
   INS_SIGN_HASH = 0x04;
@@ -40,7 +39,6 @@ export default class Avalanche {
           "getAppConfiguration",
           "getWalletAddress",
           "getWalletExtendedPublicKey",
-          "getWalletId",
           "signHash",
           "signTransaction",
         ],
@@ -261,20 +259,6 @@ export default class Avalanche {
       commit: commitData.toString("latin1"),
       name: nameData.toString("latin1")
     };
-  }
-
-  /**
-   * Get the wallet identifier for the Ledger wallet
-   *
-   * @return a byte string
-   * @example
-   * console.log((await avalanche.getWalletId()).toString("hex"));
-   *
-   * 79c46bc3
-   */
-  async getWalletId(): Promise<Buffer> {
-    const result = await this.transport.send(this.CLA, this.INS_GET_WALLET_ID, 0x00, 0x00);
-    return result.slice(0, -2);
   }
 
   async _collectSignaturesFromSuffixes(suffixes: Array<BIPPath>, ins: int, p1NotDone: int, p1Done: int) {
