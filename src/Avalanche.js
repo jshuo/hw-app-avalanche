@@ -1,8 +1,8 @@
 //@flow
 
-import type Transport from "@ledgerhq/hw-transport";
 import BIPPath from "bip32-path";
 import createHash from 'create-hash';
+
 
 /**
  * Avalanche API
@@ -12,39 +12,11 @@ import createHash from 'create-hash';
  * const avalanche = new Avalanche(transport);
  */
 export default class Avalanche {
-  transport: Transport<*>;
-  logger: (msg: string) => undefined;
-
-  CLA = 0x80;
-  MAX_APDU_SIZE = 230;
-  MAX_HRP_LENGTH = 24;
-
-  INS_VERSION = 0x00;
-  INS_PROMPT_PUBLIC_KEY = 0x02;
-  INS_PROMPT_EXT_PUBLIC_KEY = 0x03;
-  INS_SIGN_HASH = 0x04;
-  INS_SIGN_TRANSACTION = 0x05;
 
   constructor(
-    transport: Transport<*>,
-    scrambleKey: string = "Avalanche",
-    logger: (msg: string) => undefined = console.error,
+    transport
   ) {
-    this.transport = transport;
-    this.logger = logger;
-    if (scrambleKey) {
-      transport.decorateAppAPIMethods(
-        this,
-        [
-          "getAppConfiguration",
-          "getWalletAddress",
-          "getWalletExtendedPublicKey",
-          "signHash",
-          "signTransaction",
-        ],
-        scrambleKey
-      );
-    }
+    this.transport = transport
   }
 
   /**
@@ -154,62 +126,42 @@ export default class Avalanche {
    * );
    */
   async signTransaction(
-    derivationPathPrefix: BIPPath,
-    derivationPathSuffixes: Array<BIPPath>,
+    prefixPath,
+    paths,
     txn: Buffer,
-    changePath: ?BIPPath
   ): Promise<{hash: Buffer, signatures: Map<string, Buffer>}> {
+    var HDKey = require('hdkey')
+    var secp256k1 = require('secp256k1')
 
-    const SIGN_TRANSACTION_SECTION_PREAMBLE            = 0x00;
-    const SIGN_TRANSACTION_SECTION_PAYLOAD_CHUNK       = 0x01;
-    const SIGN_TRANSACTION_SECTION_PAYLOAD_CHUNK_LAST  = 0x81;
-    const SIGN_TRANSACTION_SECTION_SIGN_WITH_PATH      = 0x02;
-    const SIGN_TRANSACTION_SECTION_SIGN_WITH_PATH_LAST = 0x82;
-
-    const preamble = Buffer.concat([
-      this.uInt8Buffer(derivationPathSuffixes.length),
-      this.encodeBip32Path(derivationPathPrefix)
-    ]);
-    if (changePath != null) {
-      const preamble_ = Buffer.concat([
-        preamble,
-        this.encodeBip32Path(changePath)
-      ]);
-      await this.transport.send(this.CLA, this.INS_SIGN_TRANSACTION, SIGN_TRANSACTION_SECTION_PREAMBLE, 0x01, preamble_);
-    } else {
-      await this.transport.send(this.CLA, this.INS_SIGN_TRANSACTION, SIGN_TRANSACTION_SECTION_PREAMBLE, 0x00, preamble);
+    let resultMap: Map<string, Buffer> = new Map();
+    let suffix = paths[0]
+    let bip32path = `${prefixPath}/${suffix}`
+    const hashedTx: Buffer = Buffer.from(createHash('sha256').update(txn).digest())
+    var seed = '60999fdc8afa350aa27d6f42dc5b1aeb0bf7690191254b3b5abcee1653a6ef9801a3497900d57bc6cde16c012b5e6fbd53cd042a0b3c0a8716f6c272aaf8f0b2'
+    var hdkey = HDKey.fromMasterSeed(Buffer.from(seed, 'hex'))
+    var childkey = hdkey.derive(bip32path)
+    const ret = secp256k1.ecdsaSign(hashedTx, childkey._privateKey)
+    const signature = Buffer.from(ret.signature)
+    const recid = ret.recid
+    var v = new Uint8Array(1) 
+    v[0] = recid
+    const signatures = new Uint8Array([ ...signature, ...v])
+    // let signatures = await this.transport.SignTxHash(bip32path, hashedTx);
+    // let signatures = Buffer.from("5c7fa8fcf729016047bbdeec2516ce909caf9bd74f2c1c19bdffb769cd87a6167b759a7ed1b31ad88644ae0603349d97aafe658e2bf070a660d2fb76f1c4fd7c00", 'hex')
+    let result: Array<Buffer> = [];
+    for (let i = 0; i < paths.length; i++) {
+    resultMap.set(suffix.toString(true), signatures);
     }
 
-    let remainingData = txn.slice(0); // copy
-    let response;
-    while (remainingData.length > 0) {
-      const thisChunk = remainingData.slice(0, this.MAX_APDU_SIZE);
-      remainingData = remainingData.slice(this.MAX_APDU_SIZE);
-      response = await this.transport.send(
-        this.CLA,
-        this.INS_SIGN_TRANSACTION,
-        remainingData.length > 0
-          ? SIGN_TRANSACTION_SECTION_PAYLOAD_CHUNK
-          : SIGN_TRANSACTION_SECTION_PAYLOAD_CHUNK_LAST,
-        0x00,
-        thisChunk,
-      );
-    }
-
-    const responseHash = response.slice(0, 32);
-    const expectedHash = Buffer.from(createHash('sha256').update(txn).digest());
-    if (!responseHash.equals(expectedHash)) {
-      throw "Ledger reported a hash that does not match the expected transaction hash!";
-    }
+    // const responseHash = response.slice(0, 32);
+    // const expectedHash = Buffer.from(createHash('sha256').update(txn).digest());
+    // if (!responseHash.equals(expectedHash)) {
+    //   throw "SecuX reported a hash that does not match the expected transaction hash!";
+    // }
 
     return {
-      hash: responseHash,
-      signatures: await this._collectSignaturesFromSuffixes(
-        derivationPathSuffixes,
-        this.INS_SIGN_TRANSACTION,
-        SIGN_TRANSACTION_SECTION_SIGN_WITH_PATH,
-        SIGN_TRANSACTION_SECTION_SIGN_WITH_PATH_LAST,
-      )
+      hash: hashedTx,
+      signatures: resultMap
     };
   }
 
