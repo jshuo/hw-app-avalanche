@@ -18,7 +18,6 @@ export default class Avalanche {
     let hashedTx: Buffer;
     var HDKey = require('hdkey')
     var secp256k1 = require('secp256k1')
-
     let resultMap: Map<string, Buffer> = new Map();
     for (let i = 0; i < paths.length; i++) {
       let suffix = paths[i]
@@ -35,9 +34,9 @@ export default class Avalanche {
       const signatures = new Uint8Array([...signature, ...v])
       resultMap.set(suffix.toString(true), signatures);
     }
-
     return {
       hash: hashedTx,
       signatures: resultMap
-    };
+    }
   }
+}
