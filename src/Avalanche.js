@@ -39,26 +39,48 @@ export default class Avalanche {
     this.transport = transport
   }
 
+
+  async signHash(
+    derivationPathPrefix: BIPPath,
+    derivationPathSuffixes: Array<BIPPath>,
+    hash: Buffer,
+  ): Promise<Map<string, Buffer>> {
+    if (hash.length != 32) {
+      throw "Hash buffer must be 32 bytes";
+    }
+
+    const firstMessage: Buffer = Buffer.concat([
+      this.uInt8Buffer(derivationPathSuffixes.length),
+      hash,
+      this.encodeBip32Path(derivationPathPrefix)
+    ]);
+    const responseHash = await this.transport.send(this.CLA, this.INS_SIGN_HASH, 0x00, 0x00, firstMessage);
+    if (!responseHash.slice(0, 32).equals(hash)) {
+      throw "Ledger reported a hash that does not match the input hash!";
+    }
+
+    return this._collectSignaturesFromSuffixes(derivationPathSuffixes, this.INS_SIGN_HASH, 0x01, 0x81);
+  }
   async signTransaction(
     prefixPath,
     paths,
     txn: Buffer,
   ): Promise<{ hash: Buffer, signatures: Map<string, Buffer> }> {
     const SIGNATURE_LENGTH = 65;
-    let bip32path = [], hashedTx = [];
+    let bip32path = [], txBuffArray = [];
     let resultMap: Map<string, Buffer> = new Map();
     for (let i = 0; i < paths.length; i++) {
       let suffix = paths[i]
       bip32path[i] = `${prefixPath}/${suffix}`
-      hashedTx[i] = Buffer.from(createHash('sha256').update(txn).digest())
+      txBuffArray[i] = Buffer.from(txn)
     }
 
-    const txBuffer = buildTxBuffer(bip32path, hashedTx);
-    const rsp = await this.transport.Send(0x70, 0xa4, 0, 0,
+    const txBuffer = buildTxBuffer(bip32path, txBuffArray);
+    const rsp = await this.transport.Send(0x70, 0xa3, 0, 0,
         Buffer.concat([txBuffer]));
         if (rsp.status !== StatusCode.SUCCESS) throw new TransportStatusError(rsp.status);
 
-        if (rsp.dataLength !== SIGNATURE_LENGTH*hashedTx.length) throw Error('Invalid length Signature');
+        if (rsp.dataLength !== SIGNATURE_LENGTH*txBuffArray.length) throw Error('Invalid length Signature');
         let signature = []
         let offset = 0
         while (offset < rsp.dataLength) {
@@ -71,7 +93,7 @@ export default class Avalanche {
       resultMap.set(paths[i].toString(true), signature[i]);
     }
     return {
-      hash: hashedTx,
+      hash: '',
       signatures: resultMap
     }
   }
