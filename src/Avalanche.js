@@ -47,7 +47,7 @@ export default class Avalanche {
       let suffix = paths[i]
       bip32path.push(`${prefixPath}/${suffix}`)
     }
-    const P1 = (typeof changePath !== null) ? 0x1 : 0x0
+    const P1 = (changePath !== null) ? 0x1 : 0x0
     if (changePath !== null) bip32path.push(changePath)
     const txBuffer = buildTxBuffer(bip32path, Buffer.from(txn));
     const rsp = await this.transport.Send(0x70, 0xa7, P1, 0,
