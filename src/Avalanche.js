@@ -4,8 +4,7 @@ import createHash from 'create-hash';
 import { buildPathBuffer } from "@secux/utility";
 import { ITransport, StatusCode, TransportStatusError } from "@secux/transport";
 
-function buildTxBuffer(paths: Array<string>, txs: Array<Buffer>, tp: TransactionType, chainId: number) {
-  if (paths.length != txs.length) throw Error('Inconsistent length of paths and txs');
+function buildTxBuffer(paths: Array<string>, txs: Buffer, tp: TransactionType, chainId: number) {
 
   const head = [], data = [];
   for (let i = 0; i < paths.length; i++) {
@@ -19,14 +18,11 @@ function buildTxBuffer(paths: Array<string>, txs: Array<Buffer>, tp: Transaction
     if (pathNum !== 5 && pathNum !== 3) throw Error('Invalid Path for Signing Transaction');
 
     head.push(Buffer.concat([Buffer.from([pathNum * 4 + 4]), headerBuffer, pathBuffer]));
-
-
-    // fixed 2 byte length
-    const preparedTxLenBuf = Buffer.alloc(2);
-    preparedTxLenBuf.writeUInt16BE(txs[i].length, 0);
-    data.push(Buffer.concat([preparedTxLenBuf, txs[i]]));
   }
-
+  // fixed 2 byte length
+  const preparedTxLenBuf = Buffer.alloc(2);
+  preparedTxLenBuf.writeUInt16BE(txs.length, 0);
+  data.push(Buffer.concat([preparedTxLenBuf, txs]));
   return Buffer.concat([Buffer.from([paths.length]), ...head, ...data]);
 }
 
@@ -38,25 +34,27 @@ export default class Avalanche {
   ) {
     this.transport = transport
   }
-  async signHash(prefixPath,
+  async signTransaction(
+    prefixPath,
     paths,
-    hash: Buffer,
+    changePath,
+    txn: Buffer,
   ): Promise<{ hash: Buffer, signatures: Map<string, Buffer> }> {
     const SIGNATURE_LENGTH = 65;
-    let bip32path = [], hashedMsg = [];
+    let bip32path = [];
     let resultMap: Map<string, Buffer> = new Map();
     for (let i = 0; i < paths.length; i++) {
       let suffix = paths[i]
-      bip32path[i] = `${prefixPath}/${suffix}`
-      hashedMsg[i] = hash
+      bip32path.push(`${prefixPath}/${suffix}`)
     }
-
-    const hashBuffer = buildTxBuffer(bip32path, hashedMsg);
-    const rsp = await this.transport.Send(0x70, 0xa4, 0, 0,
-      Buffer.concat([hashBuffer]));
+    const P1 = (typeof changePath !== undefined) ? 0x1 : 0x0
+    bip32path.push(changePath)
+    const txBuffer = buildTxBuffer(bip32path, Buffer.from(txn));
+    const rsp = await this.transport.Send(0x70, 0xa7, P1, 0,
+      Buffer.concat([txBuffer]));
     if (rsp.status !== StatusCode.SUCCESS) throw new TransportStatusError(rsp.status);
 
-    if (rsp.dataLength !== SIGNATURE_LENGTH * hashedMsg.length) throw Error('Invalid length Signature');
+    if (rsp.dataLength !== SIGNATURE_LENGTH * txBuffArray.length) throw Error('Invalid length Signature');
     let signature = []
     let offset = 0
     while (offset < rsp.dataLength) {
@@ -65,43 +63,6 @@ export default class Avalanche {
       signature.push(sig)
     }
 
-    for (let i = 0; i < paths.length; i++) {
-      resultMap.set(paths[i].toString(true), signature[i]);
-    }
-    return {
-      hash: hashedMsg,
-      signatures: resultMap
-    }
-  }
-
-  async signTransaction(
-    prefixPath,
-    paths,
-    txn: Buffer,
-  ): Promise<{ hash: Buffer, signatures: Map<string, Buffer> }> {
-    const SIGNATURE_LENGTH = 65;
-    let bip32path = [], txBuffArray = [];
-    let resultMap: Map<string, Buffer> = new Map();
-    for (let i = 0; i < paths.length; i++) {
-      let suffix = paths[i]
-      bip32path[i] = `${prefixPath}/${suffix}`
-      txBuffArray[i] = Buffer.from(txn)
-    }
-
-    const txBuffer = buildTxBuffer(bip32path, txBuffArray);
-    const rsp = await this.transport.Send(0x70, 0xa3, 0, 0,
-        Buffer.concat([txBuffer]));
-        if (rsp.status !== StatusCode.SUCCESS) throw new TransportStatusError(rsp.status);
-
-        if (rsp.dataLength !== SIGNATURE_LENGTH*txBuffArray.length) throw Error('Invalid length Signature');
-        let signature = []
-        let offset = 0
-        while (offset < rsp.dataLength) {
-            const sig = rsp.data.slice(offset, offset + SIGNATURE_LENGTH)
-            offset = offset + SIGNATURE_LENGTH
-            signature.push(sig)
-        }
-        
     for (let i = 0; i < paths.length; i++) {
       resultMap.set(paths[i].toString(true), signature[i]);
     }
