@@ -42,7 +42,7 @@ export default class Avalanche {
     if (changePath !== null) bip32path.push(changePath)
     const txBuffer = buildTxBuffer(bip32path, Buffer.from(txn))
     const rsp = await this.transport.Send(0x70, 0xa7, P1, 0, Buffer.concat([txBuffer]))
-    if (rsp.status !== StatusCode.SUCCESS) throw new TransportStatusError(rsp.status)
+    // if (rsp.status !== StatusCode.SUCCESS) throw new TransportStatusError(rsp.status)
     if (rsp.dataLength !== SIGNATURE_LENGTH * paths.length) throw Error('Invalid length Signature')
 
     let signature = []
