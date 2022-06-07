@@ -1,148 +1,70 @@
 
 ## Using SecuX JS for Avalanche
 
-Here is a sample app for Node:
+Here is example of our source code 
 
 ```javascript
-const Transport = require("@ledgerhq/hw-transport-node-hid").default;
-const Avalanche = require("@obsidiansystems/hw-app-avalanche").default;
+//@flow
 
-const getWalletId = async () => {
-  const avalanche = new Avalanche(await Transport.create());
-  return await avalanche.getWalletId();
-};
+import createHash from 'create-hash'
+import { buildPathBuffer } from '@secux/utility'
+import { ITransport, StatusCode, TransportStatusError } from '@secux/transport'
 
-const signHash = async () => {
-  const transport = await Transport.create();
-  const avalanche = new Avalanche(await Transport.create());
-  return await avalanche.signHash(
-    "44'/9000'/0'/0/0",
-    "0000000000000000000000000000000000000000000000000000000000000000"
-  );
-};
+function buildTxBuffer(paths: Array<string>, txs: Buffer, tp: TransactionType, chainId: number) {
+  const head = [],
+    data = []
+  for (let i = 0; i < paths.length; i++) {
+    const headerBuffer = Buffer.alloc(4)
+    headerBuffer.writeUInt16LE(tp, 0)
+    headerBuffer.writeUInt16LE(chainId, 2)
 
-const getVersion = async () => {
-  const avalanche = new Avalanche(await Transport.create());
-  return await avalanche.getAppConfiguration();
-};
+    const path = paths[i]
+    const { pathNum, pathBuffer } = buildPathBuffer(path)
+    // generic prepare can use 3 or 5 path level key to sign
+    if (pathNum !== 5 && pathNum !== 3) throw Error('Invalid Path for Signing Transaction')
 
-const getAddress = async () => {
-  const avalanche = new Avalanche(await Transport.create());
-  return await avalanche.getWalletPublicKey("44'/9000'/0'/1/0");
-};
-
-const doAll = async () => {
-  console.log(await getWalletId());
-  console.log(await getVersion());
-  console.log(await getAddress());
-  console.log(await signHash());
-};
-
-doAll().catch(err => console.log(err));
-```
-
-## API
-
-#### Table of Contents
-
--   [Avalanche](#avalanche)
-    -   [Parameters](#parameters)
-    -   [Examples](#examples)
-    -   [getWalletPublicKey](#getwalletpublickey)
-        -   [Parameters](#parameters-1)
-        -   [Examples](#examples-1)
-    -   [signTransaction](#signtransaction)
-        -   [Parameters](#parameters-2)
-        -   [Examples](#examples-2)
-    -   [getAppConfiguration](#getappconfiguration)
-        -   [Examples](#examples-3)
-    -   [getWalletId](#getwalletid)
-        -   [Examples](#examples-4)
-
-### Avalanche
-
-Avalanche API for Ledger
-
-#### Parameters
-
--   `transport` **`Transport<any>`**
--   `scrambleKey` **[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)**  (optional, default `"Avalanche"`)
-
-#### Examples
-
-```javascript
-import Avalanche from "@obsidiansystems/hw-app-avalanche";
-const avalanche = new Avalanche(transport);
-```
-
-#### getWalletPublicKey
-
-Get Avalanche address for a given BIP-32 path.
-
-##### Parameters
-
--   `path` **[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)** a path in BIP-32 format
-
-##### Examples
-
-```javascript
-const publicKey = await avalanche.getWalletPublicKey("44'/9000'/0'/0/0");
-```
-
-Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)>** an object with a public key.
-
-#### signHash
-
-Sign a 32-byte hash of transaction with a given BIP-32 path
-
-##### Parameters
-
--   `path` **[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)** a path in BIP-32 format
--   `hash` **[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)** hash of a to sign
-
-##### Examples
-
-```javascript
-const signature = await avalanche.signHash("44'/9000'/0'/0/0", "0000000000000000000000000000000000000000000000000000000000000000");
-```
-
-Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)>** a signature as hex string.
-
-#### getAppConfiguration
-
-Get the version of the application installed on the hardware device.
-
-##### Examples
-
-```javascript
-console.log(await avalanche.getAppConfiguration());
-```
-
-produces something like
-
-```
-{
-  "version": "1.0.3",
-  "commit": "1234567",
-  "name": "Avax"
+    head.push(Buffer.concat([Buffer.from([pathNum * 4 + 4]), headerBuffer, pathBuffer]))
+  }
+  // fixed 2 byte length
+  const preparedTxLenBuf = Buffer.alloc(2)
+  preparedTxLenBuf.writeUInt16BE(txs.length, 0)
+  data.push(Buffer.concat([preparedTxLenBuf, txs]))
+  return Buffer.concat([Buffer.from([paths.length]), ...head, ...data])
 }
-```
 
-Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;{version: [string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String), commit: [string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String), name: [string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)}>** an object with a version.
+export default class Avalanche {
+  constructor(transport) {
+    this.transport = transport
+  }
+  async signTransaction(prefixPath, paths, changePath, txn: Buffer): Promise<{ hash: Buffer, signatures: Map<string, Buffer> }> {
+    const SIGNATURE_LENGTH = 65
+    let bip32path = []
+    let resultMap: Map<string, Buffer> = new Map()
+    for (let i = 0; i < paths.length; i++) {
+      let suffix = paths[i]
+      bip32path.push(`${prefixPath}/${suffix}`)
+    }
+    const P1 = changePath !== null ? 0x1 : 0x0
+    if (changePath !== null) bip32path.push(changePath)
+    const txBuffer = buildTxBuffer(bip32path, Buffer.from(txn))
+    const rsp = await this.transport.Send(0x70, 0xa7, P1, 0, Buffer.concat([txBuffer]))
+    // if (rsp.status !== StatusCode.SUCCESS) throw new TransportStatusError(rsp.status)
+    if (rsp.dataLength !== SIGNATURE_LENGTH * paths.length) throw Error('Invalid length Signature')
 
-#### getWalletId
+    let signature = []
+    let offset = 0
+    while (offset < rsp.dataLength) {
+      const sig = rsp.data.slice(offset, offset + SIGNATURE_LENGTH)
+      offset = offset + SIGNATURE_LENGTH
+      signature.push(sig)
+    }
 
-Get the wallet identifier for the Ledger wallet. This value distinguishes different Ledger hardware devices which have different seeds.
-
-##### Examples
-
-```javascript
-console.log(await avalanche.getWalletId());
-```
-produces something like
-
-```
-abcdefgh
-```
-
-Returns **[Promise](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/Promise)&lt;[string](https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/String)>** a byte string.
+    for (let i = 0; i < paths.length; i++) {
+      resultMap.set(paths[i].toString(true), signature[i])
+    }
+    return {
+      hash: '',
+      signatures: resultMap
+    }
+  }
+}
