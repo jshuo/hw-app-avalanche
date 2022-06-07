@@ -1,11 +1,5 @@
-[Github](https://github.com/LedgerHQ/ledgerjs/),
-[Ledger Devs Slack](https://ledger-dev.slack.com/)
 
-## @obsidiansystems/hw-app-avalanche
-
-[Ledger Hardware Wallet](https://www.ledger.com/) JavaScript bindings for [Avalanche](https://www.avalabs.org/), based on [LedgerJS](https://github.com/LedgerHQ/ledgerjs).
-
-## Using LedgerJS for Avalanche
+## Using SecuX JS for Avalanche
 
 Here is a sample app for Node:
 
